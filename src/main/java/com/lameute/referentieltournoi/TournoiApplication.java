@@ -1,4 +1,4 @@
-package com.lameute.tournoi;
+package com.lameute.referentieltournoi;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
