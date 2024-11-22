@@ -8,5 +8,5 @@ import java.math.BigDecimal;
 
 @Builder
 @With
-public record JoueurPartie(@NonNull String prenom, @NonNull String nomDeFamille, BigDecimal score) {
+public record JoueurPartie(@NonNull String prenom, @NonNull String pseudo, @NonNull String nomDeFamille, BigDecimal score) {
 }

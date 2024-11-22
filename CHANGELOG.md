@@ -11,13 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - API Post joueurs
 - Tests unitaires
+- Front
 
 ### Changed
 
-- Optimiser l'algorithme d'appariement des joueurs pour que les joueurs arrivés en cours de route ne se retrouvent pas 
+- Refonte de l'architecture des repositories (un seul repository par usecase dans l'architecture hexagonale/clean)
+
+### Researched
+
+- Déviation de l'algorithme avec la répartition mathématique parfaite
+
+## [0.1.0] - 2024-11-22
+
+### Added
+
+- Optimiser l'algorithme d'appariement des joueurs pour que les joueurs arrivés en cours de route ne se retrouvent pas
   tous dans le même groupe
 - Ajouter le pseudonyme d'un joueur dans tous les objets joueurs
-- Refonte de l'architecture des repositories (un seul repository par usecase dans l'architecture hexagonale)
+
+### Changed
+
+- Refonte de l'architecture des repositories (un seul repository par usecase dans l'architecture hexagonale/clean)
 
 ## [0.0.1] - 2024-04-21
 
