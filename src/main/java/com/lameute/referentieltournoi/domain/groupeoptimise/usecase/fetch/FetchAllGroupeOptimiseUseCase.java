@@ -10,11 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.stream.IntStream;
@@ -29,35 +25,49 @@ public class FetchAllGroupeOptimiseUseCase implements IFetchAllGroupeOptimise {
     private final ReadAllJoueurPlayingRepository readAllJoueurPlayingRepository;
     private final ReadAllPartieOfPreviousRondeRepository readAllPartieOfPreviousRondeRepository;
 
+    private List<JoueurShort> joueursPlaying;
+    private List<Partie> previousParties;
+    private Map<JoueurShort, Map<JoueurShort, Integer>> previousPlaysMatrix;
+    private List<JoueurShort> previouslyAbsentJoueurs;
+
     @Override
     public List<GroupeOptimise> process(Integer nombreGroupe, Integer currentRonde) {
-        List<JoueurShort> joueursPlaying = readAllJoueurPlayingRepository.readAllJoueurPlaying().stream().map(JoueurShort::new).collect(toCollection(ArrayList::new));
-        List<Partie> previousParties = readAllPartieOfPreviousRondeRepository.readAllPartieOfPreviousRonde(currentRonde);
-        Map<JoueurShort, Map<JoueurShort, Integer>> preivousPlaysMatrix = generatePreviousPlaysMatrix(joueursPlaying, previousParties);
-        var nombreJoueursRestants = new AtomicInteger(joueursPlaying.size());
+        this.joueursPlaying = readAllJoueurPlayingRepository.readAllJoueurPlaying().stream().map(JoueurShort::new).collect(toCollection(ArrayList::new));
+        this.previousParties = readAllPartieOfPreviousRondeRepository.readAllPartieOfPreviousRonde(currentRonde);
+        this.previousPlaysMatrix = this.generatePreviousPlaysMatrix();
+        this.previouslyAbsentJoueurs = this.generatePreviousAbsentJoueursList(currentRonde);
+        var nombreJoueursRestants = new AtomicInteger(this.joueursPlaying.size());
 
-        List<GroupeOptimise> groupeOptimises = IntStream.range(1, nombreGroupe + 1).boxed().map(numeroGroupe -> {
-            var nbPlayersInGroup = numeroGroupe == nombreGroupe ? Integer.valueOf(nombreJoueursRestants.get()) : nombreJoueursRestants.get() / (nombreGroupe - (numeroGroupe - 1));
+        return IntStream.range(1, nombreGroupe + 1).boxed().map(numeroGroupe -> {
+            var nbPlayersInGroup = numeroGroupe.equals(nombreGroupe) ? nombreJoueursRestants.get() : nombreJoueursRestants.get() / (nombreGroupe - (numeroGroupe - 1));
+            var nbPreviousPlayersInGroup = this.getNbPreviousPlayersInGroup(nombreGroupe, numeroGroupe);
             nombreJoueursRestants.set(nombreJoueursRestants.get() - nbPlayersInGroup);
-            var currentRoundGroupe = generateCurrentRoundGroupe(joueursPlaying, nbPlayersInGroup, preivousPlaysMatrix, currentRonde);
-            joueursPlaying.removeAll(currentRoundGroupe);
+            var currentRoundGroupe = this.generateCurrentRoundGroupe(nbPlayersInGroup, currentRonde, nbPreviousPlayersInGroup);
+            this.joueursPlaying.removeAll(currentRoundGroupe);
             return GroupeOptimise.builder()
                     .numeroGroupe(numeroGroupe)
                     .nombreJoueurs(nbPlayersInGroup)
                     .joueurs(currentRoundGroupe)
                     .build();
         }).toList();
-
-        return groupeOptimises;
     }
 
-    private Map<JoueurShort, Map<JoueurShort, Integer>> generatePreviousPlaysMatrix(List<JoueurShort> joueursPlaying, List<Partie> previousParties) {
+    private Integer getNbPreviousPlayersInGroup(Integer nombreGroupe, Integer numeroGroupe) {
+        if (this.previouslyAbsentJoueurs.isEmpty()) {
+            return 0;
+        }
+        var nbPreviousPlayersInGroupIfNotLastGroup = this.previouslyAbsentJoueurs.size() / (nombreGroupe);
+        var correctedNbPreviousPlayersInGroupIfNotLastGroup = nbPreviousPlayersInGroupIfNotLastGroup != 0 ? nbPreviousPlayersInGroupIfNotLastGroup : 1;
+        return numeroGroupe.equals(nombreGroupe) ? this.previouslyAbsentJoueurs.size() : correctedNbPreviousPlayersInGroupIfNotLastGroup;
+    }
+
+    private Map<JoueurShort, Map<JoueurShort, Integer>> generatePreviousPlaysMatrix() {
         Map<JoueurShort, Map<JoueurShort, Integer>> numberOfPlaysTogetherMatrix = new HashMap<>();
-        joueursPlaying.forEach(joueur -> {
+        this.joueursPlaying.forEach(joueur -> {
             Map<JoueurShort, Integer> opponents = new HashMap<>();
-            joueursPlaying.stream().filter(Predicate.not(joueur::equals)).forEach(autreJoueur -> opponents.put(autreJoueur, 0));
-            previousParties.forEach(previousPartie -> {
-                List<JoueurShort> joueursPartie = previousPartie.joueurs().stream().map(JoueurShort::new).filter(joueursPlaying::contains).toList();
+            this.joueursPlaying.stream().filter(Predicate.not(joueur::equals)).forEach(autreJoueur -> opponents.put(autreJoueur, 0));
+            this.previousParties.forEach(previousPartie -> {
+                List<JoueurShort> joueursPartie = previousPartie.joueurs().stream().map(JoueurShort::new).filter(this.joueursPlaying::contains).toList();
                 if (joueursPartie.stream().anyMatch(joueur::equals)) {
                     joueursPartie.stream().filter(Predicate.not(joueur::equals)).forEach(joueurPartie -> opponents.merge(joueurPartie, 1, Integer::sum));
                 }
@@ -67,30 +77,45 @@ public class FetchAllGroupeOptimiseUseCase implements IFetchAllGroupeOptimise {
         return numberOfPlaysTogetherMatrix;
     }
 
-    private List<JoueurShort> generateCurrentRoundGroupe(List<JoueurShort> joueursPlaying, Integer nbPlayersInGroup, Map<JoueurShort, Map<JoueurShort, Integer>> previousPlaysMatrix, Integer currentRonde) {
+    private List<JoueurShort> generateCurrentRoundGroupe(Integer nbPlayersInGroup, Integer currentRonde, Integer nbPreviousPlayersInGroup) {
         List<JoueurShort> groupeJoueurs = new ArrayList<>(nbPlayersInGroup);
-        Collections.shuffle(joueursPlaying);
+        Collections.shuffle(this.joueursPlaying);
+        AtomicInteger nbPreviousPlayersInGroupLeft = new AtomicInteger(nbPreviousPlayersInGroup);
+        List<JoueurShort> joueursAbleToBePutInGroup = new ArrayList<>(this.joueursPlaying);
 
         IntStream.range(0, nbPlayersInGroup).forEach(
-                playerNb -> groupeJoueurs.add(
-                        getPlayerWhoLessPlayedAgainstOthersPlayers(groupeJoueurs, joueursPlaying, previousPlaysMatrix, currentRonde)));
+                playerNb -> {
+                    this.joueursPlaying.removeAll(groupeJoueurs);
+                    joueursAbleToBePutInGroup.removeAll(groupeJoueurs);
+                    if (nbPreviousPlayersInGroupLeft.get() == 0) {
+                        joueursAbleToBePutInGroup.removeAll(this.previouslyAbsentJoueurs);
+                    }
+                    var newJoueur = getPlayerWhoLessPlayedAgainstOthersPlayers(groupeJoueurs, joueursAbleToBePutInGroup, currentRonde);
+                    groupeJoueurs.add(newJoueur);
+                    if (this.previouslyAbsentJoueurs.contains(newJoueur)) {
+                        nbPreviousPlayersInGroupLeft.decrementAndGet();
+                        this.previouslyAbsentJoueurs.remove(newJoueur);
+                    }
+                }
+        );
 
         return groupeJoueurs;
     }
 
-    private JoueurShort getPlayerWhoLessPlayedAgainstOthersPlayers(List<JoueurShort> joueursAlreadyInGroup, List<JoueurShort> joueursPlaying, Map<JoueurShort, Map<JoueurShort, Integer>> previousPlaysMatrix, Integer currentRonde) {
+    private JoueurShort getPlayerWhoLessPlayedAgainstOthersPlayers(List<JoueurShort> joueursAlreadyInGroup, List<JoueurShort> joueursAbleToBePutInGroup, Integer currentRonde) {
         Map<JoueurShort, Integer> totalEncounterForJoueurAgainstJoueursAlreadyInGroup = new HashMap<>();
         if (joueursAlreadyInGroup.isEmpty()) {
-            return joueursPlaying.stream().findFirst().orElseThrow();
+            return this.joueursPlaying.stream().findFirst().orElseThrow();
         }
-        joueursPlaying.removeAll(joueursAlreadyInGroup);
-        Collections.shuffle(joueursPlaying);
-        joueursPlaying.forEach(
+
+        Collections.shuffle(joueursAbleToBePutInGroup);
+        joueursAbleToBePutInGroup.forEach(
                 joueurNotAlreadyUsed -> joueursAlreadyInGroup.forEach(
                         joueurAlreadyInGroup -> totalEncounterForJoueurAgainstJoueursAlreadyInGroup.merge(
-                                joueurNotAlreadyUsed, previousPlaysMatrix.get(joueurAlreadyInGroup).get(joueurNotAlreadyUsed), Integer::sum)));
-        var minimumNbOfPlaysAgainstJoueursAlreadyInGroupFound = totalEncounterForJoueurAgainstJoueursAlreadyInGroup.entrySet().stream().sorted(Map.Entry.comparingByValue()).findFirst().orElseThrow().getValue();
-        var playersWithMinimumNbOfPlays = totalEncounterForJoueurAgainstJoueursAlreadyInGroup.entrySet().stream().filter(player -> minimumNbOfPlaysAgainstJoueursAlreadyInGroupFound.equals(player.getValue())).map(player -> player.getKey()).collect(toCollection(ArrayList::new));
+                                joueurNotAlreadyUsed, this.previousPlaysMatrix.get(joueurAlreadyInGroup).get(joueurNotAlreadyUsed), Integer::sum)));
+
+        var minimumNbOfPlaysAgainstJoueursAlreadyInGroupFound = totalEncounterForJoueurAgainstJoueursAlreadyInGroup.entrySet().stream().min(Map.Entry.comparingByValue()).orElseThrow().getValue();
+        var playersWithMinimumNbOfPlays = totalEncounterForJoueurAgainstJoueursAlreadyInGroup.entrySet().stream().filter(player -> minimumNbOfPlaysAgainstJoueursAlreadyInGroupFound.equals(player.getValue())).map(Map.Entry::getKey).collect(toCollection(ArrayList::new));
         var minPlaysAgainstAnyPlayerAlreadyInGroup = new AtomicInteger(0);
         while (playersWithMinimumNbOfPlays.size() != 1 && minPlaysAgainstAnyPlayerAlreadyInGroup.get() < currentRonde) {
             var nbOfMinPlaysAgainstAnyPlayerAlreadyInGroup = new AtomicInteger(0);
@@ -100,7 +125,7 @@ public class FetchAllGroupeOptimiseUseCase implements IFetchAllGroupeOptimise {
                 var nbMin = new AtomicInteger(0);
                 joueursAlreadyInGroup.forEach(
                         joueurAlreadyInGroup -> {
-                            if (minPlaysAgainstAnyPlayerAlreadyInGroup.get() == previousPlaysMatrix.get(joueurAlreadyInGroup).get(joueurWithMinPlays)) {
+                            if (minPlaysAgainstAnyPlayerAlreadyInGroup.get() == this.previousPlaysMatrix.get(joueurAlreadyInGroup).get(joueurWithMinPlays)) {
                                 nbMin.addAndGet(1);
                             }
                         });
@@ -119,6 +144,24 @@ public class FetchAllGroupeOptimiseUseCase implements IFetchAllGroupeOptimise {
             minPlaysAgainstAnyPlayerAlreadyInGroup.addAndGet(1);
         }
         Collections.shuffle(playersWithMinimumNbOfPlays);
-        return playersWithMinimumNbOfPlays.get(0);
+        return playersWithMinimumNbOfPlays.getFirst();
+    }
+
+    private List<JoueurShort> generatePreviousAbsentJoueursList(Integer currentRonde) {
+        List<JoueurShort> previousAbsentPlayers = new ArrayList<>();
+        if (currentRonde > 1) {
+            this.joueursPlaying.forEach(joueur -> {
+                var nbParties = new AtomicInteger(0);
+                this.previousParties.forEach(previousPartie -> {
+                    if (previousPartie.joueurs().stream().map(JoueurShort::new).anyMatch(joueurShort -> joueurShort.equals(joueur))) {
+                        nbParties.addAndGet(1);
+                    }
+                });
+                if (nbParties.get() < (currentRonde - 1)) {
+                    previousAbsentPlayers.add(joueur);
+                }
+            });
+        }
+        return previousAbsentPlayers;
     }
 }

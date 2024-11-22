@@ -5,5 +5,5 @@ import lombok.With;
 
 @Builder
 @With
-public record Joueur(Integer id, String prenom, String nomDeFamille, Boolean isPlaying) {
+public record Joueur(Integer id, String prenom, String pseudo, String nomDeFamille, Boolean isPlaying) {
 }
